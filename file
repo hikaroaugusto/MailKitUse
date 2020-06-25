@@ -1,0 +1,99 @@
+using MailKit.Net.Smtp;
+using Microsoft.Extensions.Configuration;
+using MimeKit;
+using System.Net.Mime;
+using System.Net.Mail;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Net;
+
+namespace Dkp.GestaoCartelas.Portal.Services
+{
+    // This class is used by the application to send email for account confirmation and password reset.
+    // For more details see https://go.microsoft.com/fwlink/?LinkID=532713
+    public class EmailSender : IEmailSender
+    {
+        public EmailSender()
+        {
+            var builder = new ConfigurationBuilder()
+                .SetBasePath(Directory.GetCurrentDirectory())
+                .AddJsonFile("appsettings.json");
+
+            Configuration = builder.Build();
+        }
+
+        public static IConfigurationRoot Configuration { get; set; }
+        public async Task<Task> SendEmailAsyncTask(string email, string subject, string mensagem)
+        {
+            /* https://github.com/dotnet/platform-compat/blob/master/docs/DE0005.md */
+            MailAddress from = new MailAddress(Configuration.GetSection("Email").GetValue<string>("login"));
+            MailMessage message = new MailMessage();
+            message.From = from;
+
+            if (!string.IsNullOrEmpty(email))
+                foreach (string item in email.Split(','))
+                    message.To.Add(new MailAddress(item));
+
+            message.Subject = subject;
+            message.Body = mensagem;
+            message.IsBodyHtml = true;
+
+            using (System.Net.Mail.SmtpClient client = new System.Net.Mail.SmtpClient())
+            {
+                client.UseDefaultCredentials = false;
+                var credencial = new NetworkCredential()
+                {
+                    UserName = Configuration.GetSection("Email").GetValue<string>("login")
+                };
+              
+                client.Credentials = credencial;
+                client.Host = Configuration.GetSection("Email").GetValue<string>("Host");
+                client.Port = Configuration.GetSection("Email").GetValue<int>("Port");
+                client.EnableSsl = Configuration.GetSection("Email").GetValue<bool>("EnableSsl");
+                
+                await client.SendMailAsync(message);
+            }
+
+            return Task.CompletedTask;
+        }
+        Task IEmailSender.SendEmailAsync(string email, string subject, string message)
+        {
+            if (Configuration.GetSection("Email").GetValue<bool>("useTecnoval"))
+                return SendEmailAsyncTask(email, subject, message);
+
+            return SendEmailAsyncGmail(email, subject, message);
+        }
+
+        // Versão Mailkit (recomendado mas não funciona conta AD)
+        public Task SendEmailAsyncGmail(string email, string subject, string message)
+        {
+            var mail = new MimeMessage();
+            mail.From.Add(new MailboxAddress(Configuration.GetSection("EmailGmail").GetValue<string>("login")));
+
+            if (!string.IsNullOrEmpty(email))
+                foreach (string item in email.Split(','))
+                    mail.To.Add(new MailboxAddress(item));
+            mail.Subject = subject;
+            var bodyBuilder = new BodyBuilder()
+            { HtmlBody = message };
+            mail.Body = bodyBuilder.ToMessageBody();
+
+            using (var client = new MailKit.Net.Smtp.SmtpClient())
+            {
+                client.Connect(Configuration.GetSection("EmailGmail").GetValue<string>("smtp"),
+                               Configuration.GetSection("EmailGmail").GetValue<int>("smtpPort"),
+                               Configuration.GetSection("EmailGmail").GetValue<bool>("smtpUseSSL"));
+                client.Authenticate(Configuration.GetSection("EmailGmail").GetValue<string>("login"),
+                                    Configuration.GetSection("EmailGmail").GetValue<string>("password"));
+
+                client.Send(mail);
+                client.Disconnect(true);
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+}
